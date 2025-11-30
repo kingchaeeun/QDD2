@@ -3,7 +3,6 @@ Example CLI runner for the qdd2 pipeline.
 
 Usage:
   python main.py --text '트럼프 "베네수엘라 상공 전면폐쇄"' --date 2024-11-29
-  python main.py --file sample.txt --quote "북한과의 대화를 재개해야 한다"
 
 Flags:
   --text / --file : input text (one must be provided)
@@ -13,14 +12,14 @@ Flags:
   --top-k         : keywords used in the final query (default 3)
   --rollcall      : rollcall.com-friendly query mode (boolean flag)
   --debug         : verbose prints from NER/keyword extraction (boolean flag)
-
-Only query generation is performed here; Google CSE search requires API keys and is not invoked by default.
 """
 
 import argparse
+import logging
 import sys
 
 from qdd2.pipeline import build_queries_from_text
+from qdd2.search_client import google_cse_search
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=3, help="Keywords to include in query (default: 3)")
     parser.add_argument("--rollcall", action="store_true", help="Use rollcall.com-oriented query construction")
     parser.add_argument("--debug", action="store_true", help="Verbose debug logs")
+    parser.add_argument("--search", action="store_true", help="Automatically run Google CSE with the generated EN query")
     return parser.parse_args()
 
 
@@ -51,8 +51,22 @@ def load_text(args: argparse.Namespace) -> str:
 
 def main():
     args = parse_args()
-    text = load_text(args)
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="[%(levelname)s] %(message)s",
+    )
+    logger = logging.getLogger("qdd2.cli")
 
+    logger.info("[Step 0] Starting QDD2 pipeline CLI")
+    text = load_text(args)
+    logger.info("[Step 1] Loaded text (%d chars)", len(text))
+    if args.quote:
+        logger.info("Quote provided: %s", args.quote)
+    if args.date:
+        logger.info("Article date: %s", args.date)
+    logger.info("Args: top_n=%d, top_k=%d, rollcall=%s, debug=%s, search=%s", args.top_n, args.top_k, args.rollcall, args.debug, args.search)
+
+    logger.info("[Step 2] Calling pipeline.build_queries_from_text()")
     result = build_queries_from_text(
         text=text,
         top_n_keywords=args.top_n,
@@ -62,6 +76,14 @@ def main():
         rollcall_mode=args.rollcall,
         device=0,  # CPU by default
         debug=args.debug,
+    )
+    logger.info("[Step 3] Pipeline completed")
+    logger.info(
+        "Summary: entities=%d, keywords=%d, queries(ko=%s / en=%s)",
+        len(result.get("entities", [])),
+        len(result.get("keywords", [])),
+        bool(result.get("queries", {}).get("ko")),
+        bool(result.get("queries", {}).get("en")),
     )
 
     print("\n=== Entities by type ===")
@@ -75,6 +97,21 @@ def main():
     print("\n=== Queries ===")
     print(f"KO: {result['queries']['ko']}")
     print(f"EN: {result['queries']['en']}")
+
+    if args.search:
+        logger.info("[Step 4] Running Google CSE search with generated query")
+        query = result["queries"].get("en") or result["queries"].get("ko")
+        if not query:
+            logger.warning("No query available to search.")
+            return
+        data = google_cse_search(query, num=5, debug=args.debug)
+        items = data.get("items", []) or []
+        if not items:
+            logger.warning("No results returned from CSE.")
+        else:
+            print("\n=== Top search results ===")
+            for item in items[:5]:
+                print(f"- {item.get('title', '').strip()} :: {item.get('link', '')}")
 
 
 if __name__ == "__main__":
