@@ -22,6 +22,32 @@ from qdd2.snippet_matcher import find_best_span_from_candidates_debug
 from qdd2.translation import translate_ko_to_en
 from qdd2.pipeline import build_queries_from_text
 from qdd2.search_client import google_cse_search
+from qdd2.rollcall_search import get_search_results
+TRUMP_NAME_VARIANTS = [
+    "트럼프",
+    "도널드 트럼프",
+    "도널드 J 트럼프",
+    "donald trump",
+    "donald j. trump",
+    "president trump",
+]
+
+
+def contains_trump_entity(pipeline_result: dict) -> bool:
+    """
+    build_queries_from_text 결과에서 PERSON 엔티티 중
+    트럼프(도널드 트럼프)가 하나라도 포함돼 있으면 True.
+    """
+    entities_by_type = pipeline_result.get("entities_by_type", {}) or {}
+    persons = entities_by_type.get("PERSON", []) or []
+
+    norm_persons = [str(p).lower() for p in persons]
+
+    for p in norm_persons:
+        for variant in TRUMP_NAME_VARIANTS:
+            if variant.lower() in p:
+                return True
+    return False
 
 def run_qdd2(
     text: str | None = None,
@@ -95,72 +121,122 @@ def run_qdd2(
         bool(result.get("queries", {}).get("en")),
     )
 
-    # 3) (옵션) CSE 검색 + SBERT 기반 best span
+    # 3-A) 엔티티 기반 트럼프 감지
+    is_trump_context = contains_trump_entity(result)
+
+    # 3-B) 기사/인용문 텍스트에서도 트럼프 문자열이 있으면 무조건 트럼프 컨텍스트로 취급
+    text_lower = loaded_text.lower()
+    quote_lower = (quote or "").lower()
+
+    if (
+        "트럼프" in loaded_text
+        or "도널드 트럼프" in loaded_text
+        or "trump" in text_lower
+        or "트럼프" in quote or "trump" in quote_lower
+    ):
+        is_trump_context = True
+
+    logger.info("Trump context detected: %s", is_trump_context)
+
+    # 3) (옵션) 검색 + SBERT 기반 best span
     search_items: list[dict] = []
     best_span: dict | None = None
 
     if search:
-        logger.info("[Step 4] Running Google CSE search with generated query")
-        query = result["queries"].get("en") or result["queries"].get("ko")
+        logger.info("[Step 4] Running search with generated query")
+        # 4) Rollcall 모드라면 rollcall 쿼리를 우선 사용
+        if rollcall:
+            # Rollcall 모드에서는 generate_search_query가 ko/en에 이미 짧은 쿼리를 넣어줌
+            query = result["queries"].get("en") or result["queries"].get("ko")
+        else:
+            # 일반 모드에서는 기존처럼 동작
+            query = result["queries"].get("en") or result["queries"].get("ko")
+
         if not query:
             logger.warning("No query available to search.")
         else:
-            data = google_cse_search(query, num=5, debug=debug)
-            search_items = data.get("items", []) or []
-            if not search_items:
-                logger.warning("No results returned from CSE.")
+            # 4-A) 트럼프 컨텍스트면: rollcall 우선, 실패 시 Google CSE
+            if is_trump_context:
+                logger.info("[Search] Trump context → using Rollcall Selenium search first")
+                try:
+                    rollcall_links = get_search_results(query, top_k=5)
+                except Exception as e:
+                    logger.warning("Rollcall search failed, fallback to CSE: %s", e)
+                    rollcall_links = []
+
+                # rollcall 검색 결과를 CSE search_items 형식으로 맞추기
+                search_items = [
+                    {"link": url, "snippet": ""}
+                    for url in rollcall_links
+                    if url
+                ]
+
+                # rollcall에서 아무 것도 못 찾으면 CSE로 fallback
+                if not search_items:
+                    logger.info("[Search] No rollcall results, fallback to Google CSE")
+                    data = google_cse_search(query, num=5, debug=debug)
+                    search_items = data.get("items", []) or []
+
+            # 4-B) 트럼프 컨텍스트가 아니면: 기존 Google CSE만 사용
             else:
-                # --- 여기서부터 SBERT 유사도 기반 best span 계산 ---
-                logger.info("[Step 5] Running SBERT snippet matching on CSE results")
+                logger.info("[Search] Non-Trump context → using Google CSE")
+                data = google_cse_search(query, num=5, debug=debug)
+                search_items = data.get("items", []) or []
 
-                # 1) 유사도 계산에 사용할 영어 문장 결정
-                quote_for_match_en: str | None = None
+        if not search_items:
+            logger.warning("No results returned from search backends.")
+        else:
+            # --- 여기서부터 SBERT 유사도 기반 best span 계산 ---
+            logger.info("[Step 5] Running SBERT snippet matching on search results")
 
-                if quote:
+            # 1) 유사도 계산에 사용할 영어 문장 결정
+            quote_for_match_en: str | None = None
+
+            if quote:
+                try:
+                    quote_for_match_en = translate_ko_to_en(quote)
+                except Exception as e:
+                    logger.warning("Quote translation failed, fallback to EN query: %s", e)
+
+            if not quote_for_match_en:
+                # fallback: EN 쿼리 자체를 사용
+                quote_for_match_en = result["queries"].get("en")
+
+            if quote_for_match_en:
+                candidates = []
+                for it in search_items:
+                    url = it.get("link")
+                    if not url:      # ★ snippet 없어도 허용
+                        continue
+                    snippet = it.get("snippet", "") or ""
+                    candidates.append(
+                        {
+                            "url": url,
+                            "snippet": snippet,
+                        }
+                    )
+
+                if candidates:
                     try:
-                        quote_for_match_en = translate_ko_to_en(quote)
-                    except Exception as e:
-                        logger.warning("Quote translation failed, fallback to EN query: %s", e)
-
-                if not quote_for_match_en:
-                    # fallback: EN 쿼리 자체를 사용
-                    quote_for_match_en = result["queries"].get("en")
-
-                if quote_for_match_en:
-                    candidates = []
-                    for it in search_items:
-                        url = it.get("link")
-                        snippet = it.get("snippet", "") or ""
-                        if not url or not snippet:
-                            continue
-                        candidates.append(
-                            {
-                                "url": url,
-                                "snippet": snippet,
-                            }
+                        best_span = find_best_span_from_candidates_debug(
+                            quote_en=quote_for_match_en,
+                            candidates=candidates,
+                            num_before=1,
+                            num_after=1,
+                            min_score=0.2,  # threshold는 상황에 따라 조절 가능
                         )
-
-                    if candidates:
-                        try:
-                            best_span = find_best_span_from_candidates_debug(
-                                quote_en=quote_for_match_en,
-                                candidates=candidates,
-                                num_before=1,
-                                num_after=1,
-                                min_score=0.2,  # threshold는 상황에 따라 조절 가능
+                        if best_span:
+                            logger.info(
+                                "[Step 6] Best span found: score=%.4f, url=%s",
+                                best_span.get("best_score", -1.0),
+                                best_span.get("url", ""),
                             )
-                            if best_span:
-                                logger.info(
-                                    "[Step 6] Best span found: score=%.4f, url=%s",
-                                    best_span.get("best_score", -1.0),
-                                    best_span.get("url", ""),
-                                )
-                            else:
-                                logger.warning("No span passed the similarity threshold.")
-                        except Exception as e:
-                            logger.warning("SBERT snippet matching failed: %s", e)
-                else:
-                    logger.warning("No English text available for similarity matching.")
+                        else:
+                            logger.warning("No span passed the similarity threshold.")
+                    except Exception as e:
+                        logger.warning("SBERT snippet matching failed: %s", e)
+            else:
+                logger.warning("No English text available for similarity matching.")
 
     return {
         "pipeline_result": result,

@@ -184,110 +184,105 @@ def generate_search_query(
     # =========================
     # 1) Rollcall 모드 전용 블록
     # =========================
-    if rollcall_mode and article_date:
-        """
-        [Rollcall 모드 - NER 중심]
-        구조: Speaker + Date + (포커스 엔티티 1개: NER 기반)
-        """
-        # 1) 날짜 영어 포맷 변환
+    if rollcall_mode and article_date is not None:
+
+        # 날짜 변환 동일
+        article_date_str = str(article_date).strip()
+        date_en = None
         try:
-            dt = datetime.strptime(article_date, "%Y-%m-%d")
-            date_en = dt.strftime("%B %d %Y")  # 예: November 26 2025
-        except Exception:
-            date_en = article_date
-
-        target_word_ko = ""
-        target_word_en = ""
-
-        # 2-1) 1순위: 원본 NER 엔티티에서 포커스 엔티티 선택
-        focus_ko, focus_en = _select_rollcall_focus_entity(
-            entities=entities,
-            speaker_ko=speaker_ko,
-        )
-        if focus_ko:
-            target_word_ko = focus_ko
-            target_word_en = focus_en
-
-        # 2-2) 2순위: entities_by_type["LOC"] (loc_list) 사용
-        if (not target_word_ko) and loc_list:
-            target_word_ko = loc_list[0]
-            if locs_en_tokens:
-                target_word_en = locs_en_tokens[0]
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", article_date_str):
+                dt = datetime.strptime(article_date_str, "%Y-%m-%d")
+                date_en = dt.strftime("%B %d %Y")
             else:
-                target_word_en = target_word_ko
+                date_en = article_date_str
+        except:
+            date_en = article_date_str
 
-        # 2-3) 3순위: 그래도 없으면 KeyBERT keywords에서 1개만 fallback
-        if (not target_word_ko) and keywords:
-            # 화자 이름이 들어간 키워드는 전부 제외하고,
-            # 키워드 문구 안에서 '명사 같아 보이는 토큰' 하나만 뽑아서 사용
-            for kw_text, _ in keywords:
-                if not kw_text:
-                    continue
+        # =======================================
+        # 2) PER 태그 중 발화자 제외 1명 선택
+        # =======================================
+        target_per_ko = ""
+        target_per_en = ""
 
-                # 키워드 전체에 화자 이름이 들어가면 스킵
-                if speaker_ko and (speaker_ko in kw_text):
-                    continue
+        per_list = entities_by_type.get("PER", [])
+        for per in per_list:
+            if speaker_ko and (per == speaker_ko):
+                continue
+            target_per_ko = per
+            # 영어 변환
+            try:
+                target_per_en = translate_ko_to_en(per)
+                target_per_en = " ".join(target_per_en.split()[:3])
+            except:
+                target_per_en = per
+            break
 
-                chosen_base = ""
-                # 키워드 문구를 토큰 단위로 쪼개서 검사
-                for raw_tok in kw_text.split():
-                    tok = raw_tok.strip()
-                    if speaker_ko and (speaker_ko in tok):
-                        # 토큰에 화자 이름 들어가면 스킵
+        # =======================================
+        # 3) 고유명사 키워드 1개 선택 (LOC/ORG > KeyBERT)
+        # =======================================
+        extra_kw_ko = ""
+        extra_kw_en = ""
+
+        # 3-1) LOC 또는 ORG 우선 사용
+        loc_list = entities_by_type.get("LOC", [])
+        org_list = entities_by_type.get("ORG", [])
+
+        chosen_list = loc_list if loc_list else org_list
+
+        if chosen_list:
+            extra_kw_ko = chosen_list[0]
+            try:
+                extra_en_full = translate_ko_to_en(extra_kw_ko)
+                extra_kw_en = " ".join(extra_en_full.split()[:3])
+            except:
+                extra_kw_en = extra_kw_ko
+        else:
+            # 3-2) LOC/ORG 없으면 KeyBERT에서 명사 하나
+            if keywords:
+                for kw_text, _ in keywords:
+                    if not kw_text:
                         continue
-                    if len(tok) < 2:
+                    if speaker_ko and (speaker_ko in kw_text):
                         continue
-                    # 숫자 섞인 건 버림
-                    if re.search(r"\d", tok):
-                        continue
-                    # 완성형 한글만 우선 사용 (필요에 따라 완화 가능)
-                    if not re.fullmatch(r"[가-힣]+", tok):
+                    if len(kw_text) < 2:
                         continue
 
-                    # 조사/어미를 떼서 명사 근간만 남기고 길이 체크
-                    base = re.sub(
-                        r"(에서|에게|부터|까지|으로써|으로서|으로|만큼|뿐|조차|마저|마다|처럼|같이|보다|께서|라고|하고|와|과|랑|이랑|은|는|이|가|을|를|의)$",
-                        "",
-                        tok,
-                    )
-                    if len(base) < 2:
-                        continue
-
-                    chosen_base = base
-                    break  # 이 키워드에서 쓸 토큰 하나 찾았으면 탈출
-
-                if chosen_base:
-                    target_word_ko = chosen_base
+                    extra_kw_ko = kw_text.strip()
                     try:
-                        kw_en_full = translate_ko_to_en(chosen_base)
-                        target_word_en = " ".join(kw_en_full.split()[:3])
-                    except Exception:
-                        target_word_en = chosen_base
-                    break  # fallback 완성했으니 전체 루프 탈출
+                        extra_kw_en = " ".join(translate_ko_to_en(extra_kw_ko).split()[:3])
+                    except:
+                        extra_kw_en = extra_kw_ko
+                    break
 
-        # 3) EN 쿼리 조립: [Speaker] [Date] [Entity?]
-        parts_en: List[str] = []
+        # ===========================
+        # 최종 쿼리 구성 (EN / KO)
+        # ===========================
+        parts_en = []
         if speaker_en:
-            parts_en.append(speaker_en)
+            parts_en.append(str(speaker_en))
         if date_en:
-            parts_en.append(date_en)
-        if target_word_en:
-            parts_en.append(target_word_en)
+            parts_en.append(str(date_en))
+        if target_per_en:
+            parts_en.append(str(target_per_en))
+        if extra_kw_en:
+            parts_en.append(str(extra_kw_en))
         query_en = " ".join(parts_en).strip() or None
 
-        # 4) KO 쿼리 조립: [Speaker] [Date] [Entity?]
-        parts_ko: List[str] = []
+        parts_ko = []
         if speaker_ko:
-            parts_ko.append(speaker_ko)
-        if article_date:
-            parts_ko.append(article_date)
-        if target_word_ko:
-            parts_ko.append(target_word_ko)
+            parts_ko.append(str(speaker_ko))
+        if article_date_str:
+            parts_ko.append(article_date_str)
+        if target_per_ko:
+            parts_ko.append(str(target_per_ko))
+        if extra_kw_ko:
+            parts_ko.append(str(extra_kw_ko))
         query_ko = " ".join(parts_ko).strip() or None
 
+        logger.info("[RollcallQuery] ko=%s", query_ko)
+        logger.info("[RollcallQuery] en=%s", query_en)
+
         return {"ko": query_ko, "en": query_en}
-
-
 
     # =========================
     # 2) 일반 모드 (기존 로직)
