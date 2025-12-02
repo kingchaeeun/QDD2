@@ -6,8 +6,8 @@ from typing import Dict, Optional
 
 import requests
 
-from qdd2 import config
-from qdd2.translation import translate_ko_to_en
+from app import config
+from app.translation import translate_ko_to_en
 
 
 def get_wikidata_english_name(korean_name: str, timeout: int = 10) -> Dict[str, Optional[str]]:

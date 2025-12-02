@@ -4,10 +4,10 @@ Keyword extraction and NER-informed re-ranking.
 
 from typing import Dict, List, Sequence, Tuple
 
-from qdd2 import config
-from qdd2.entities import extract_ner_entities
-from qdd2.models import get_keyword_model
-from qdd2.text_utils import normalize_korean_phrase
+from app import config
+from app.entities import extract_ner_entities
+from app.models import get_keyword_model
+from app.text_utils import normalize_korean_phrase
 
 
 def rerank_with_ner_boost(

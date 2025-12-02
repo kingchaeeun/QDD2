@@ -5,8 +5,8 @@ High-level helpers that compose extraction + query building.
 import logging
 from typing import Dict, Optional
 
-from qdd2.keywords import extract_keywords_with_ner
-from qdd2.query_builder import generate_search_query
+from app.keywords import extract_keywords_with_ner
+from app.query_builder import generate_search_query
 
 logger = logging.getLogger(__name__)
 

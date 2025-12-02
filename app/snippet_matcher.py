@@ -8,8 +8,8 @@ from typing import Dict, List, Optional
 import torch
 from sentence_transformers import util
 
-from qdd2.models import get_sentence_model
-from qdd2.text_utils import contains_korean, clean_text
+from app.models import get_sentence_model
+from app.text_utils import contains_korean, clean_text
 
 # We keep split_into_sentences here to allow custom length thresholds for snippets.
 def split_into_sentences(text: str, is_ko: Optional[bool] = None) -> List[str]:

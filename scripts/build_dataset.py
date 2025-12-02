@@ -4,8 +4,8 @@ import pandas as pd
 from tqdm import tqdm
 
 from main import run_qdd2
-from qdd2.translation import translate_ko_to_en
-from qdd2.text_utils import extract_quotes  # ← 실제 함수명에 맞게 수정
+from app.translation import translate_ko_to_en
+from app.text_utils import extract_quotes  # ← 실제 함수명에 맞게 수정
 
 
 def build_dataset_from_articles(

@@ -1,5 +1,5 @@
 """
-Example CLI runner for the qdd2 pipeline.
+Example CLI runner for the app pipeline.
 
 Usage:
   python main.py --text '트럼프 "베네수엘라 상공 전면폐쇄"' --date 2024-11-29
@@ -18,11 +18,11 @@ import argparse
 import logging
 import sys
 
-from qdd2.snippet_matcher import find_best_span_from_candidates_debug
-from qdd2.translation import translate_ko_to_en
-from qdd2.pipeline import build_queries_from_text
-from qdd2.search_client import google_cse_search
-from qdd2.rollcall_search import get_search_results
+from app.snippet_matcher import find_best_span_from_candidates_debug
+from app.translation import translate_ko_to_en
+from app.pipeline import build_queries_from_text
+from app.search_client import google_cse_search
+from app.rollcall_search import get_search_results
 TRUMP_NAME_VARIANTS = [
     "트럼프",
     "도널드 트럼프",
@@ -74,7 +74,7 @@ def run_qdd2(
         level=logging.DEBUG if debug else logging.INFO,
         format="[%(levelname)s] %(message)s",
     )
-    logger = logging.getLogger("qdd2.cli")
+    logger = logging.getLogger("app.cli")
 
     logger.info("[Step 0] Starting QDD2 pipeline (function mode)")
 

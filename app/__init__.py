@@ -9,11 +9,11 @@ This package exposes reusable building blocks for:
 - search query construction
 """
 
-from qdd2.entities import extract_ner_entities
-from qdd2.keywords import extract_keywords_with_ner
-from qdd2.translation import translate_ko_to_en
-from qdd2.name_resolution import resolve_person_name_en, get_wikidata_english_name
-from qdd2.query_builder import generate_search_query
+from app.entities import extract_ner_entities
+from app.keywords import extract_keywords_with_ner
+from app.translation import translate_ko_to_en
+from app.name_resolution import resolve_person_name_en, get_wikidata_english_name
+from app.query_builder import generate_search_query
 
 __all__ = [
     "extract_ner_entities",

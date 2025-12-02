@@ -4,7 +4,7 @@ Translation utilities.
 
 import logging
 
-from qdd2.models import get_translation_models
+from app.models import get_translation_models
 
 logger = logging.getLogger(__name__)
 

@@ -13,8 +13,8 @@ from io import BytesIO
 import pdfplumber
 import requests
 
-from qdd2 import config
-from qdd2.text_utils import contains_korean
+from app import config
+from app.text_utils import contains_korean
 
 SESSION = requests.Session()
 SESSION.headers.update(config.HTTP_HEADERS)

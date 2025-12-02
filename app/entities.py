@@ -4,9 +4,9 @@ NER helpers: run pipeline, merge BIO tokens, and return cleaned entities.
 
 from typing import Dict, List, Sequence
 
-from qdd2 import config
-from qdd2.models import get_ner_pipeline
-from qdd2.text_utils import split_sentences
+from app import config
+from app.models import get_ner_pipeline
+from app.text_utils import split_sentences
 
 
 def merge_ner_entities(results: Sequence[Dict], debug: bool = False) -> List[Dict]:

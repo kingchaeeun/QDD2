@@ -11,7 +11,7 @@ from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from transformers import MarianMTModel, MarianTokenizer, pipeline
 
-from qdd2 import config
+from app import config
 
 
 def _resolve_device(device: int) -> int:
