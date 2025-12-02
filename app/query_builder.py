@@ -7,8 +7,8 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from qdd2.name_resolution import resolve_person_name_en
-from qdd2.translation import translate_ko_to_en
+from app.name_resolution import resolve_person_name_en
+from app.translation import translate_ko_to_en
 
 logger = logging.getLogger(__name__)
 
