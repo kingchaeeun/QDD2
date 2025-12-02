@@ -50,6 +50,7 @@ def get_search_results(query, top_k=5):
     return links
 
 
+# trump venezuela 29 테스트 부분
 if __name__ == "__main__":
     query = "trump venezuela 29"
     links = get_search_results(query)
