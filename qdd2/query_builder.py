@@ -12,6 +12,37 @@ from qdd2.translation import translate_ko_to_en
 
 logger = logging.getLogger(__name__)
 
+def _format_date_en(article_date: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    article_date를 문자열로 받아서
+    - 원본 문자열 (article_date_str)
+    - 영어 포맷(예: November 30, 2025) 을 튜플로 반환
+
+    인식 가능한 포맷: YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD
+    """
+    if article_date is None:
+        return None, None
+
+    s = str(article_date).strip()
+    if not s:
+        return None, None
+
+    dt = None
+    for fmt in ("%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            break
+        except ValueError:
+            continue
+
+    if dt is None:
+        # 못 파싱하면 그냥 원본을 그대로 쓰도록
+        return s, s
+
+    # 원하는 포맷: November 30, 2025  (쉼표 포함)
+    date_en = dt.strftime("%B %d, %Y")
+    return s, date_en
+
 
 def _normalize_token(tok: str) -> str:
     """Normalize token for deduplication: lowercase, strip punctuation/extra spaces."""
@@ -132,6 +163,7 @@ def generate_search_query(
     default:
         query = speaker + location tokens + keyword tokens + optional quoted sentence
     """
+    article_date_str, date_en = _format_date_en(article_date)
     per_list = entities_by_type.get("PER", [])
     if not per_list:
         return {"ko": None, "en": None}
@@ -186,107 +218,55 @@ def generate_search_query(
     # =========================
     if rollcall_mode and article_date is not None:
 
-        # 날짜 변환 동일
-        article_date_str = str(article_date).strip()
-        date_en = None
-        try:
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", article_date_str):
-                dt = datetime.strptime(article_date_str, "%Y-%m-%d")
-                date_en = dt.strftime("%B %d %Y")
-            else:
-                date_en = article_date_str
-        except:
-            date_en = article_date_str
+        # article_date_str, date_en 는 함수 시작부에서 _format_date_en 로 이미 계산됨
+        # article_date_str: 원본 (예: "2025.11.30")
+        # date_en        : "November 30, 2025"
 
-        # =======================================
-        # 2) PER 태그 중 발화자 제외 1명 선택
-        # =======================================
-        target_per_ko = ""
-        target_per_en = ""
-
-        per_list = entities_by_type.get("PER", [])
-        for per in per_list:
-            if speaker_ko and (per == speaker_ko):
-                continue
-            target_per_ko = per
-            # 영어 변환
-            try:
-                target_per_en = translate_ko_to_en(per)
-                target_per_en = " ".join(target_per_en.split()[:3])
-            except:
-                target_per_en = per
-            break
-
-        # =======================================
-        # 3) 고유명사 키워드 1개 선택 (LOC/ORG > KeyBERT)
-        # =======================================
-        extra_kw_ko = ""
-        extra_kw_en = ""
-
-        # 3-1) LOC 또는 ORG 우선 사용
-        loc_list = entities_by_type.get("LOC", [])
-        org_list = entities_by_type.get("ORG", [])
-
-        chosen_list = loc_list if loc_list else org_list
-
-        if chosen_list:
-            extra_kw_ko = chosen_list[0]
-            try:
-                extra_en_full = translate_ko_to_en(extra_kw_ko)
-                extra_kw_en = " ".join(extra_en_full.split()[:3])
-            except:
-                extra_kw_en = extra_kw_ko
-        else:
-            # 3-2) LOC/ORG 없으면 KeyBERT에서 명사 하나
-            if keywords:
-                for kw_text, _ in keywords:
-                    if not kw_text:
-                        continue
-                    if speaker_ko and (speaker_ko in kw_text):
-                        continue
-                    if len(kw_text) < 2:
-                        continue
-
-                    extra_kw_ko = kw_text.strip()
-                    try:
-                        extra_kw_en = " ".join(translate_ko_to_en(extra_kw_ko).split()[:3])
-                    except:
-                        extra_kw_en = extra_kw_ko
-                    break
+        # --- (선택) speaker_en 정제 함수 ---
+        def normalize_name_en(name: str, max_words: int = 3) -> str:
+            import re as _re
+            name = _re.sub(r"[^A-Za-z\s]", " ", str(name))
+            name = _re.sub(r"\s+", " ", name).strip()
+            parts = name.split()
+            if not parts:
+                return ""
+            return " ".join(parts[:max_words])
 
         # ===========================
         # 최종 쿼리 구성 (EN / KO)
         # ===========================
+        # EN: 발화자 + 날짜
         parts_en = []
         if speaker_en:
-            parts_en.append(str(speaker_en))
+            speaker_en_clean = normalize_name_en(speaker_en, max_words=3)
+            if speaker_en_clean:
+                parts_en.append(speaker_en_clean)
         if date_en:
-            parts_en.append(str(date_en))
-        if target_per_en:
-            parts_en.append(str(target_per_en))
-        if extra_kw_en:
-            parts_en.append(str(extra_kw_en))
+            parts_en.append(date_en)  # ← 여기
         query_en = " ".join(parts_en).strip() or None
 
+        # KO: 발화자 + 날짜
         parts_ko = []
         if speaker_ko:
             parts_ko.append(str(speaker_ko))
         if article_date_str:
             parts_ko.append(article_date_str)
-        if target_per_ko:
-            parts_ko.append(str(target_per_ko))
-        if extra_kw_ko:
-            parts_ko.append(str(extra_kw_ko))
         query_ko = " ".join(parts_ko).strip() or None
 
         logger.info("[RollcallQuery] ko=%s", query_ko)
         logger.info("[RollcallQuery] en=%s", query_en)
 
+        # 롤콜 모드에서는 여기서 바로 종료
         return {"ko": query_ko, "en": query_en}
 
     # =========================
     # 2) 일반 모드 (기존 로직)
     # =========================
+    base_tokens: List[str] = [speaker_en] + locs_en_tokens + kws_en_tokens
+    if date_en:
+        base_tokens.append(date_en)   # ← 여기서도 "November 30, 2025" 추가
+
+
     query_en_tokens: List[str] = _dedupe_preserve(
         [speaker_en] + locs_en_tokens + kws_en_tokens
     )
