@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Quote Distortion Detector",
+  "version": "0.1.0",
+  "description": "Automatically detects direct quotes on Naver News and shows distortion cues.",
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "action": {
+    "default_popup": "dist/public/popup.html",
+    "default_icon": {
+      "16": "dist/public/icon128.png",
+      "48": "dist/public/icon128.png",
+      "128": "dist/public/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "dist/public/icon128.png",
+    "48": "dist/public/icon128.png",
+    "128": "dist/public/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://n.news.naver.com/mnews/article/*/*"
+      ],
+      "js": [
+        "dist/content-script.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://n.news.naver.com/mnews/article/*/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dist/assets/*",
+        "dist/public/*"
+      ],
+      "matches": [
+        "https://n.news.naver.com/*"
+      ]
+    }
+  ]
+}
