@@ -8,17 +8,13 @@ from typing import Dict, List, Optional
 import torch
 from sentence_transformers import util
 
-<<<<<<< HEAD:app/snippet_matcher.py
-from app.models import get_sentence_model
-from app.text_utils import contains_korean, clean_text
-=======
+# Prefer new quote_backend loaders; fall back to legacy app modules.
 try:
     from quote_backend.models.loaders import get_sentence_model
     from quote_backend.utils.text_utils import contains_korean, clean_text
 except ImportError:
     from app.models import get_sentence_model
     from app.text_utils import contains_korean, clean_text
->>>>>>> main:app/snippet_matcher.py
 
 # We keep split_into_sentences here to allow custom length thresholds for snippets.
 def split_into_sentences(text: str, is_ko: Optional[bool] = None) -> List[str]:

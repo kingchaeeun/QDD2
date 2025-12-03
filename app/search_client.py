@@ -13,10 +13,7 @@ from io import BytesIO
 import pdfplumber
 import requests
 
-<<<<<<< HEAD:app/search_client.py
-from app import config
-from app.text_utils import contains_korean
-=======
+# Prefer new quote_backend config; fall back to legacy app.config for compatibility.
 try:
     from quote_backend.config import (
         BASE_DOMAINS,
@@ -39,7 +36,6 @@ except ImportError:
     HTML_MIN_LENGTH = config.HTML_MIN_LENGTH
     HTTP_HEADERS = config.HTTP_HEADERS
     PDF_TIMEOUT = config.PDF_TIMEOUT
->>>>>>> main:app/search_client.py
 
 SESSION = requests.Session()
 SESSION.headers.update(HTTP_HEADERS)

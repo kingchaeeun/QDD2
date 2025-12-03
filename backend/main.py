@@ -59,7 +59,12 @@ async def health() -> dict:
 
 @app.post("/api/analyze")
 async def analyze(payload: AnalyzeRequest) -> dict:
-    article_text = payload.article.text or "\n".join(payload.article.paragraphs or [])
+    # 헤드라인 + 본문을 합친 텍스트를 기본으로 사용한다.
+    base_body = payload.article.text or "\n".join(payload.article.paragraphs or [])
+    if payload.article.title:
+        article_text = f"{payload.article.title}\n{base_body}" if base_body else payload.article.title
+    else:
+        article_text = base_body
     quotes = payload.quotes or []
 
     quote_texts = [normalize_quote(q.text) for q in quotes if q.text and q.text.strip()]

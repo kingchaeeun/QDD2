@@ -39,3 +39,49 @@ export function extractQuotesFromText(text: string, minLength = 6): string[] {
 
   return quotes;
 }
+
+export interface QuoteWithId {
+  id: number;
+  text: string;
+  section: "headline" | "body";
+}
+
+/**
+ * 헤드라인과 본문을 분리해서 받되,
+ * 1) 헤드라인에서 먼저 직접인용문을 찾고 (id = 1, 2, ...)
+ * 2) 본문에서 위에서부터 순서대로 이어서 id를 부여한다.
+ *
+ * Python 쪽 `extract_quotes_advanced`와 동일한 패턴/로직을 따르되,
+ * id와 섹션 정보를 함께 리턴한다.
+ */
+export function extractQuotesWithIds(
+  headline: string,
+  body: string,
+  minLength = 6,
+): QuoteWithId[] {
+  const result: QuoteWithId[] = [];
+  const seen = new Set<string>();
+
+  const scan = (section: "headline" | "body", text: string) => {
+    if (!text) return;
+    for (const base of QUOTE_PATTERNS) {
+      const pattern = new RegExp(base.source, base.flags);
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text)) !== null) {
+        const cleaned = normalizeQuote(match[1]);
+        if (cleaned.length < minLength || seen.has(cleaned)) continue;
+        seen.add(cleaned);
+        result.push({
+          id: result.length + 1,
+          text: cleaned,
+          section,
+        });
+      }
+    }
+  };
+
+  scan("headline", headline || "");
+  scan("body", body || "");
+
+  return result;
+}

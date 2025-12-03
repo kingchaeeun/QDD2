@@ -86,8 +86,9 @@ void (async function bootstrap() {
     console.info('[QDD] Direct quotes detected', rawQuotes.length);
 
     if (quotesForScoring.length === 0) {
-      const fallbackQuotes = extractQuotesFromText(article.paragraphs.join('\n'));
+      const fallbackQuotes = extractQuotesFromText([article.title, ...article.paragraphs].join('\n'));
       quotesForScoring = fallbackQuotes.map((text, index) => ({
+        // 헤드라인 + 본문 전체 텍스트에서 추출한 순서대로 id를 부여한다.
         id: index + 1,
         text,
         speaker: 'Article quote',
@@ -98,12 +99,21 @@ void (async function bootstrap() {
     const enrichedQuotes = await requestDistortionScores(quotesForScoring, article);
     console.info('[QDD] Distortion scores resolved', enrichedQuotes.length);
 
-    enrichedQuotes.forEach((quote, index) => {
-      const isDistorted = isQuoteDistorted(quote);
-      const target = quoteRegistry.get(index);
-      if (target) {
-        target.dataset.qddDistorted = String(isDistorted);
+    // 백엔드에서 돌아온 결과는 각 quote id를 그대로 보존하므로,
+    // DOM 하이라이트도 index가 아니라 id 기준으로 매핑한다.
+    const quoteById = new Map<number, DetectedQuote>();
+    enrichedQuotes.forEach((quote) => {
+      quoteById.set(quote.id, quote);
+    });
+
+    quoteRegistry.forEach((element, index) => {
+      const quoteId = index + 1;
+      const quote = quoteById.get(quoteId);
+      if (!quote) {
+        return;
       }
+      const isDistorted = isQuoteDistorted(quote);
+      element.dataset.qddDistorted = String(isDistorted);
     });
 
     applyHighlightState();
@@ -274,13 +284,17 @@ function getQuoteTargets(article: ArticleContext): HTMLElement[] {
     }
   };
 
-  pushIfValid(article.root);
-
   const headlineSelectors = ['#title_area', '.media_end_head_headline', '.media_end_head_title', '.media_end_head'];
+  // 1) 헤드라인 영역을 먼저 스캔하도록 targets 순서를 조정한다.
   headlineSelectors.forEach((selector) => {
     const el = document.querySelector(selector);
     pushIfValid(el as HTMLElement | null);
   });
+
+  // 2) 그 다음에 기사 본문(root)을 추가해서
+  //    헤드라인 인용문이 항상 id=1부터 시작하고,
+  //    본문 인용문이 위에서부터 2,3,... 순서로 이어지도록 한다.
+  pushIfValid(article.root);
 
   return targets;
 }
@@ -389,7 +403,9 @@ async function requestDistortionScores(
     reporter: article.reporter,
     paragraphs: article.paragraphs,
     url: window.location.href,
-    text: article.paragraphs.join('\n'),
+    // 헤드라인 + 본문을 합쳐서 백엔드에서도 동일한 텍스트 기준으로
+    // 정규식 기반 직접인용문을 추출할 수 있도록 한다.
+    text: [article.title, ...article.paragraphs].join('\n'),
   };
 
   const message = {
@@ -569,7 +585,9 @@ function focusQuoteSpan(index: number) {
 function applyHighlightState() {
   quoteRegistry.forEach((element) => {
     const isDistorted = element.dataset.qddDistorted === 'true';
-    const shouldHighlight = isDistorted ? currentHighlightSettings.distorted : currentHighlightSettings.normal;
+    const shouldHighlight = isDistorted
+      ? currentHighlightSettings.distorted
+      : currentHighlightSettings.normal;
     element.classList.toggle('qdd-quote--muted', !shouldHighlight);
   });
 }

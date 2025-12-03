@@ -4,14 +4,10 @@ Translation utilities.
 
 import logging
 
-<<<<<<< HEAD:app/translation.py
-from app.models import get_translation_models
-=======
 try:
     from quote_backend.models.loaders import get_translation_models
 except ImportError:
     from app.models import get_translation_models
->>>>>>> main:app/translation.py
 
 logger = logging.getLogger(__name__)
 
