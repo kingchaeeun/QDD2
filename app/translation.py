@@ -4,7 +4,14 @@ Translation utilities.
 
 import logging
 
+<<<<<<< HEAD:app/translation.py
 from app.models import get_translation_models
+=======
+try:
+    from quote_backend.models.loaders import get_translation_models
+except ImportError:
+    from app.models import get_translation_models
+>>>>>>> main:app/translation.py
 
 logger = logging.getLogger(__name__)
 
@@ -19,4 +26,4 @@ def translate_ko_to_en(text: str) -> str:
     logger.debug("Translation result: %s", out)
     return out
 
-print(translate_ko_to_en("트럼프 베네수엘라 상공 전면폐쇄"))  # For quick test
+# Removed test print statement

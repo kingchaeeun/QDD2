@@ -15,7 +15,7 @@ from common.quote_extraction import extract_quotes, normalize_quote  # noqa: E40
 from app.pipeline import build_queries_from_text  # noqa: E402
 
 
-app = FastAPI(title="QDD2 Backend", version="0.1.0")
+app = FastAPI(title="app Backend", version="0.1.0")
 
 ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",

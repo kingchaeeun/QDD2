@@ -1,9 +1,7 @@
-# build_dataset.py
-
 import pandas as pd
 from tqdm import tqdm
 
-from main import run_qdd2
+from main import run_app
 from app.translation import translate_ko_to_en
 from app.text_utils import extract_quotes  # ← 실제 함수명에 맞게 수정
 
@@ -11,14 +9,10 @@ from app.text_utils import extract_quotes  # ← 실제 함수명에 맞게 수�
 def build_dataset_from_articles(
     input_csv: str,
     text_col: str = "content",
+    date_col: str = "date",          # 날짜 컬럼명
     output_csv: str | None = None,
-    rollcall: bool = False,
+    rollcall: bool = True,           # ← "트럼프일 때 rollcall 허용" 플래그
 ) -> pd.DataFrame:
-    """
-    크롤링된 기사 CSV를 읽어서 인용문 단위로 원문 + 유사도까지 뽑아서
-    id, original, original_en, source_quote_en, article_text, similarity, source_url
-    형태의 DataFrame/CSV를 생성한다.
-    """
     df_articles = pd.read_csv(input_csv)
     print("기사 컬럼:", df_articles.columns.tolist())
 
@@ -30,32 +24,55 @@ def build_dataset_from_articles(
         if not isinstance(article_text, str) or not article_text.strip():
             continue
 
-        # 1) QDD2 text_utils 기반 인용문 추출
+        # 날짜
+        article_date = row.get(date_col, None)
+
+        # 인용문 추출
         quotes_ko = extract_quotes(article_text)
         if not quotes_ko:
             continue
 
-        # 2) 각 인용문마다 QDD2 파이프라인 실행
+        # 기사 단위 트럼프 여부
+        article_lower = article_text.lower()
+        is_trump_article = (
+            "트럼프" in article_text
+            or "도널드 트럼프" in article_text
+            or "donald trump" in article_lower
+            or "president trump" in article_lower
+        )
+
         for quote_ko in quotes_ko:
             gid += 1
 
+            quote_lower = str(quote_ko).lower()
+            is_trump_quote = (
+                "트럼프" in quote_ko
+                or "도널드 트럼프" in quote_ko
+                or "donald trump" in quote_lower
+                or "president trump" in quote_lower
+            )
+
+            # 🔴 여기서 정확히 정의
+            # rollcall=True로 build_dataset을 호출했을 때만,
+            # 그리고 진짜 트럼프 문맥일 때만 rollcall 사용
+            use_rollcall = rollcall and (is_trump_article or is_trump_quote)
+
             try:
-                # 한국어 인용문 → 영어 번역 (데이터셋 컬럼용)
                 original_en = translate_ko_to_en(quote_ko)
             except Exception:
                 original_en = None
 
             try:
-                out = run_qdd2(
+                out = run_app(
                     text=article_text,
                     file_path=None,
                     quote=quote_ko,
-                    date=None,          # 지금 CSV에 날짜 없으니 None
+                    date=article_date,
                     top_n=15,
                     top_k=3,
-                    rollcall=rollcall,
+                    rollcall=use_rollcall,   # ← 이제 정의돼 있음
                     debug=False,
-                    search=True,        # CSE + SBERT 유사도까지 사용
+                    search=True,
                 )
             except Exception as e:
                 records.append(
@@ -88,6 +105,7 @@ def build_dataset_from_articles(
                     "article_text": article_span_en,
                     "similarity": sim_score,
                     "source_url": source_url,
+                    "error": None,
                 }
             )
 
@@ -99,19 +117,18 @@ def build_dataset_from_articles(
     return df_out
 
 
-# -------------------------------
-# PyCharm에서 Run 버튼 한 번으로 실행
-# -------------------------------
 if __name__ == "__main__":
     INPUT_CSV = "articles.csv"
-    OUTPUT_CSV = "out_dataset.csv"      # 결과 파일 이름
-    TEXT_COL = "content"                # 기사 본문 컬럼명 (중요)
+    OUTPUT_CSV = "out_dataset.csv"
+    TEXT_COL = "content"
+    DATE_COL = "date"
 
     df = build_dataset_from_articles(
         input_csv=INPUT_CSV,
         text_col=TEXT_COL,
+        date_col=DATE_COL,
         output_csv=OUTPUT_CSV,
-        rollcall=True,   # rollcall 전용 쿼리 쓰고 싶으면 True
+        rollcall=True,   # 트럼프 문맥이면 rollcall 사용
     )
 
     print("=== 데이터 생성 완료 ===")

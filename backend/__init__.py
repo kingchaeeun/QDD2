@@ -1,1 +1,1 @@
-"""Backend service package for QDD2."""
+"""Backend service package for app."""

@@ -17,13 +17,34 @@ def merge_ner_entities(results: Sequence[Dict], debug: bool = False) -> List[Dic
     buffer = []
 
     for ent in results:
-        parts = (ent.get("entity") or "").split("-")
-        entity_type = parts[0] if parts else ""
-        tag_type = parts[1] if len(parts) > 1 else "B"
+        raw_label = str(ent.get("entity") or "")
+        parts = raw_label.split("-")
+
+        # HuggingFace nav er-ner style: "B-PER", "I-ORG" 등 다양한 포맷을 안전하게 처리
+        entity_type = ""
+        tag_type = "B"
+
+        if len(parts) == 2:
+            left, right = parts[0], parts[1]
+            if left in {"B", "I"} and right in config.NER_LABELS:
+                # "B-PER" → tag_type=B, entity_type=PER
+                tag_type, entity_type = left, right
+            elif right in {"B", "I"} and left in config.NER_LABELS:
+                # "PER-B" → tag_type=B, entity_type=PER
+                tag_type, entity_type = right, left
+            else:
+                # 예상치 못한 포맷: 이전 동작과 최대한 비슷하게 유지
+                entity_type, tag_type = left, right
+        elif len(parts) == 1:
+            entity_type = parts[0]
+            tag_type = "B"
+        else:
+            entity_type = parts[0] if parts else ""
+            tag_type = "B"
 
         if entity_type not in config.NER_LABELS:
             if debug:
-                print(f"Skipping non-target label: {entity_type}")
+                print(f"Skipping non-target label: {entity_type} (raw={raw_label})")
             continue
 
         if tag_type == "B":

@@ -6,9 +6,40 @@ from typing import Dict, Optional
 
 import requests
 
+<<<<<<< HEAD:app/name_resolution.py
 from app import config
 from app.translation import translate_ko_to_en
+=======
+from app import config
+from app.name_lexicon import PERSON_NAME_LEXICON
+from app.translation import translate_ko_to_en
+>>>>>>> main:app/name_resolution.py
 
+def resolve_person_name_en(name_ko: str) -> str:
+    """
+    한국어 인명 → 검색용 영어 이름
+    1) 로컬 인명사전 우선
+    2) 없으면 기존(위키데이터/번역) 로직
+    """
+    name_ko = (name_ko or "").strip()
+
+    # 1) 정확 매칭
+    if name_ko in PERSON_NAME_LEXICON:
+        return PERSON_NAME_LEXICON[name_ko]
+
+    # 2) 부분 포함 매칭(예: "이스라엘의 네타냐후 총리" 같은 경우)
+    for key, val in PERSON_NAME_LEXICON.items():
+        if key in name_ko:
+            return val
+
+    # 3) fallback: 기존 Wikidata/번역 로직
+    #    (이미 갖고 있는 코드 그대로 호출)
+    # ex) wikidata_hit = query_wikidata(name_ko)
+    # ...
+    try:
+        return translate_ko_to_en(name_ko)
+    except Exception:
+        return name_ko
 
 def get_wikidata_english_name(korean_name: str, timeout: int = 10) -> Dict[str, Optional[str]]:
     """

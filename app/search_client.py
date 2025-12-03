@@ -13,14 +13,39 @@ from io import BytesIO
 import pdfplumber
 import requests
 
+<<<<<<< HEAD:app/search_client.py
 from app import config
 from app.text_utils import contains_korean
+=======
+try:
+    from quote_backend.config import (
+        BASE_DOMAINS,
+        DEFAULT_TIMEOUT,
+        GOOGLE_API_KEY,
+        GOOGLE_CSE_CX,
+        HTML_MIN_LENGTH,
+        HTTP_HEADERS,
+        PDF_TIMEOUT,
+    )
+    from quote_backend.utils.text_utils import contains_korean
+except ImportError:
+    # Fallback to old config
+    from app import config
+    from app.text_utils import contains_korean
+    BASE_DOMAINS = config.BASE_DOMAINS
+    DEFAULT_TIMEOUT = config.DEFAULT_TIMEOUT
+    GOOGLE_API_KEY = config.GOOGLE_API_KEY_ENV
+    GOOGLE_CSE_CX = config.GOOGLE_CSE_CX_ENV
+    HTML_MIN_LENGTH = config.HTML_MIN_LENGTH
+    HTTP_HEADERS = config.HTTP_HEADERS
+    PDF_TIMEOUT = config.PDF_TIMEOUT
+>>>>>>> main:app/search_client.py
 
 SESSION = requests.Session()
-SESSION.headers.update(config.HTTP_HEADERS)
+SESSION.headers.update(HTTP_HEADERS)
 
 
-def is_valid_page(url: str, timeout: int = config.DEFAULT_TIMEOUT) -> bool:
+def is_valid_page(url: str, timeout: int = DEFAULT_TIMEOUT) -> bool:
     try:
         r = SESSION.get(url, timeout=timeout, allow_redirects=True)
         if r.status_code != 200:
@@ -28,7 +53,7 @@ def is_valid_page(url: str, timeout: int = config.DEFAULT_TIMEOUT) -> bool:
         content_type = (r.headers.get("Content-Type") or "").lower()
         if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
             return False
-        return len((r.text or "").strip()) > config.HTML_MIN_LENGTH
+        return len((r.text or "").strip()) > HTML_MIN_LENGTH
     except requests.RequestException:
         return False
 
@@ -45,13 +70,9 @@ def google_cse_search(
     backoff: float = 1.4,
     debug: bool = False,
 ):
-    # Prefer environment variables; if none, fall back to config literals (as currently stored).
-    api_key = os.getenv(config.GOOGLE_API_KEY_ENV) or (
-        config.GOOGLE_API_KEY_ENV if config.GOOGLE_API_KEY_ENV and len(config.GOOGLE_API_KEY_ENV) > 20 else None
-    )
-    cse_cx = os.getenv(config.GOOGLE_CSE_CX_ENV) or (
-        config.GOOGLE_CSE_CX_ENV if config.GOOGLE_CSE_CX_ENV and len(config.GOOGLE_CSE_CX_ENV) > 5 else None
-    )
+    # Use environment variables or config values
+    api_key = os.getenv("GOOGLE_API_KEY") or GOOGLE_API_KEY
+    cse_cx = os.getenv("GOOGLE_CSE_CX") or GOOGLE_CSE_CX
     assert api_key and cse_cx, "Set GOOGLE_API_KEY and GOOGLE_CSE_CX environment variables (or populate config values)"
 
     params = {
@@ -72,7 +93,7 @@ def google_cse_search(
 
     for attempt in range(retries):
         try:
-            resp = SESSION.get(url, params=params, timeout=config.DEFAULT_TIMEOUT)
+            resp = SESSION.get(url, params=params, timeout=DEFAULT_TIMEOUT)
             if debug:
                 print(f"[DEBUG] CSE attempt {attempt + 1}: {resp.status_code} -> {resp.url}")
 
@@ -109,7 +130,7 @@ def collect_candidates_google_cse(
     lr = "lang_ko" if is_ko else None
     hl = "ko" if is_ko else "en"
     gl = "kr" if is_ko else "us"
-    domains = domain_list if domain_list is not None else config.BASE_DOMAINS
+    domains = domain_list if domain_list is not None else BASE_DOMAINS
 
     for site_filter in domains:
         sub_query = f"{query} {site_filter}"
@@ -194,7 +215,7 @@ def extract_pdf_url_from_html(html: str, base_url: str) -> Optional[str]:
 def extract_text_from_pdf_url(pdf_url: str) -> Optional[str]:
     """Download PDF and extract text with pdfplumber."""
     try:
-        r = SESSION.get(pdf_url, timeout=config.PDF_TIMEOUT)
+        r = SESSION.get(pdf_url, timeout=PDF_TIMEOUT)
         if r.status_code != 200:
             print(f"[WARN] PDF request failed: {pdf_url}, status={r.status_code}")
             return None

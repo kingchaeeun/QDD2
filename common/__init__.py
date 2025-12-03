@@ -1,1 +1,1 @@
-"""Shared modules for QDD2 (JS/Python cross-cutting utilities)."""
+"""Shared modules for app (JS/Python cross-cutting utilities)."""

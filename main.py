@@ -12,17 +12,29 @@ Flags:
   --top-k         : keywords used in the final query (default 3)
   --rollcall      : rollcall.com-friendly query mode (boolean flag)
   --debug         : verbose prints from NER/keyword extraction (boolean flag)
+  --search        : run web search + span matching
 """
 
 import argparse
 import logging
 import sys
 
-from app.snippet_matcher import find_best_span_from_candidates_debug
-from app.translation import translate_ko_to_en
-from app.pipeline import build_queries_from_text
-from app.search_client import google_cse_search
-from app.rollcall_search import get_search_results
+try:
+    from quote_backend.core.pipeline import build_queries_from_text
+    from quote_backend.utils.translation import translate_ko_to_en
+    from quote_backend.services.search_service import SearchService
+    # Import legacy modules for compatibility
+    from app.snippet_matcher import find_best_span_from_candidates_debug
+    from app.search_client import google_cse_search
+    from app.rollcall_search import get_search_results
+except ImportError:
+    # Fallback to old imports
+    from app.snippet_matcher import find_best_span_from_candidates_debug
+    from app.translation import translate_ko_to_en
+    from app.pipeline import build_queries_from_text
+    from app.search_client import google_cse_search
+    from app.rollcall_search import get_search_results
+
 TRUMP_NAME_VARIANTS = [
     "트럼프",
     "도널드 트럼프",
@@ -35,11 +47,15 @@ TRUMP_NAME_VARIANTS = [
 
 def contains_trump_entity(pipeline_result: dict) -> bool:
     """
-    build_queries_from_text 결과에서 PERSON 엔티티 중
+    build_queries_from_text 결과의 NER 엔티티 중
     트럼프(도널드 트럼프)가 하나라도 포함돼 있으면 True.
+    PER/PERSON 두 라벨을 모두 확인한다.
     """
     entities_by_type = pipeline_result.get("entities_by_type", {}) or {}
-    persons = entities_by_type.get("PERSON", []) or []
+
+    persons: list[str] = []
+    for key in ("PER", "PERSON"):
+        persons.extend(entities_by_type.get(key, []) or [])
 
     norm_persons = [str(p).lower() for p in persons]
 
@@ -49,7 +65,8 @@ def contains_trump_entity(pipeline_result: dict) -> bool:
                 return True
     return False
 
-def run_qdd2(
+
+def run_app(
     text: str | None = None,
     file_path: str | None = None,
     quote: str | None = None,
@@ -61,12 +78,12 @@ def run_qdd2(
     search: bool = False,
 ):
     """
-    QDD2 파이프라인을 Python 함수로 호출할 수 있게 한 엔트리포인트.
+    app 파이프라인을 Python 함수로 호출할 수 있게 한 엔트리포인트.
 
     반환값 예시:
     {
         "pipeline_result": {...},          # build_queries_from_text 결과
-        "search_items": [ {...}, ... ],    # CSE search items (search=True일 때만)
+        "search_items": [ {...}, ... ],    # 검색 결과 아이템 (search=True일 때만)
         "best_span": {...} or None,        # SBERT 기반 best span (search=True + 후보 있을 때만)
     }
     """
@@ -76,7 +93,7 @@ def run_qdd2(
     )
     logger = logging.getLogger("app.cli")
 
-    logger.info("[Step 0] Starting QDD2 pipeline (function mode)")
+    logger.info("[Step 0] Starting app pipeline (function mode)")
 
     # 1) 텍스트 로딩
     if text is not None:
@@ -121,65 +138,61 @@ def run_qdd2(
         bool(result.get("queries", {}).get("en")),
     )
 
-    # 3-A) 엔티티 기반 트럼프 감지
+    # 3-A) NER 기반 트럼프 감지
     is_trump_context = contains_trump_entity(result)
 
-    # 3-B) 기사/인용문 텍스트에서도 트럼프 문자열이 있으면 무조건 트럼프 컨텍스트로 취급
+    # 3-B) 텍스트/인용문에 직접 "트럼프/Trump"가 등장하는 경우 보조로 감지
     text_lower = loaded_text.lower()
-    quote_lower = (quote or "").lower()
+    quote_text = quote or ""
+    quote_lower = quote_text.lower()
 
-    if (
-        "트럼프" in loaded_text
-        or "도널드 트럼프" in loaded_text
-        or "trump" in text_lower
-        or "트럼프" in quote or "trump" in quote_lower
-    ):
-        is_trump_context = True
+    if not is_trump_context:
+        if (
+            "트럼프" in quote_text
+            or "도널드 트럼프" in quote_text
+            or "trump" in quote_lower
+            or ("트럼프" in loaded_text and "도널드" in loaded_text)
+        ):
+            is_trump_context = True
 
     logger.info("Trump context detected: %s", is_trump_context)
 
-    # 3) (옵션) 검색 + SBERT 기반 best span
+    # 4) (옵션) 검색 + SBERT 기반 best span
     search_items: list[dict] = []
     best_span: dict | None = None
 
     if search:
         logger.info("[Step 4] Running search with generated query")
-        # 4) Rollcall 모드라면 rollcall 쿼리를 우선 사용
-        if rollcall:
-            # Rollcall 모드에서는 generate_search_query가 ko/en에 이미 짧은 쿼리를 넣어줌
-            query = result["queries"].get("en") or result["queries"].get("ko")
-        else:
-            # 일반 모드에서는 기존처럼 동작
-            query = result["queries"].get("en") or result["queries"].get("ko")
+
+        # 쿼리는 EN → KO 우선 사용
+        query = result["queries"].get("en") or result["queries"].get("ko")
 
         if not query:
             logger.warning("No query available to search.")
         else:
-            # 4-A) 트럼프 컨텍스트면: rollcall 우선, 실패 시 Google CSE
-            if is_trump_context:
-                logger.info("[Search] Trump context → using Rollcall Selenium search first")
+            # 4-A) 트럼프 컨텍스트 + rollcall=True → Rollcall 우선, 실패 시 CSE
+            if is_trump_context and rollcall:
+                logger.info("[Search] Trump context + rollcall=True → using Rollcall Selenium search first")
                 try:
                     rollcall_links = get_search_results(query, top_k=5)
                 except Exception as e:
                     logger.warning("Rollcall search failed, fallback to CSE: %s", e)
                     rollcall_links = []
 
-                # rollcall 검색 결과를 CSE search_items 형식으로 맞추기
                 search_items = [
                     {"link": url, "snippet": ""}
                     for url in rollcall_links
                     if url
                 ]
 
-                # rollcall에서 아무 것도 못 찾으면 CSE로 fallback
                 if not search_items:
                     logger.info("[Search] No rollcall results, fallback to Google CSE")
                     data = google_cse_search(query, num=5, debug=debug)
                     search_items = data.get("items", []) or []
 
-            # 4-B) 트럼프 컨텍스트가 아니면: 기존 Google CSE만 사용
+            # 4-B) 그 외에는 무조건 CSE 사용
             else:
-                logger.info("[Search] Non-Trump context → using Google CSE")
+                logger.info("[Search] Using Google CSE (non-Trump context or rollcall=False)")
                 data = google_cse_search(query, num=5, debug=debug)
                 search_items = data.get("items", []) or []
 
@@ -192,9 +205,9 @@ def run_qdd2(
             # 1) 유사도 계산에 사용할 영어 문장 결정
             quote_for_match_en: str | None = None
 
-            if quote:
+            if quote_text:
                 try:
-                    quote_for_match_en = translate_ko_to_en(quote)
+                    quote_for_match_en = translate_ko_to_en(quote_text)
                 except Exception as e:
                     logger.warning("Quote translation failed, fallback to EN query: %s", e)
 
@@ -206,7 +219,7 @@ def run_qdd2(
                 candidates = []
                 for it in search_items:
                     url = it.get("link")
-                    if not url:      # ★ snippet 없어도 허용
+                    if not url:
                         continue
                     snippet = it.get("snippet", "") or ""
                     candidates.append(
@@ -245,9 +258,8 @@ def run_qdd2(
     }
 
 
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="QDD2 extraction/query test runner")
+    parser = argparse.ArgumentParser(description="app extraction/query test runner")
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--text", type=str, help="Inline text to process")
     src.add_argument("--file", type=str, help="Path to a UTF-8 text file to process")
@@ -258,7 +270,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=3, help="Keywords to include in query (default: 3)")
     parser.add_argument("--rollcall", action="store_true", help="Use rollcall.com-oriented query construction")
     parser.add_argument("--debug", action="store_true", help="Verbose debug logs")
-    parser.add_argument("--search", action="store_true", help="Automatically run Google CSE with the generated EN query")
+    parser.add_argument(
+        "--search",
+        action="store_true",
+        help="Automatically run web search (Rollcall for Trump context, otherwise Google CSE)",
+    )
     return parser.parse_args()
 
 
@@ -276,7 +292,7 @@ def load_text(args: argparse.Namespace) -> str:
 def main():
     args = parse_args()
 
-    out = run_qdd2(
+    out = run_app(
         text=args.text,
         file_path=args.file,
         quote=args.quote,
@@ -316,8 +332,6 @@ def main():
         print(f"SCORE      : {best_span.get('best_score', -1.0):.4f}")
         print(f"SENTENCE   : {best_span.get('best_sentence', '')}")
         print(f"SPAN TEXT  : {best_span.get('span_text', '')}")
-
-
 
 
 if __name__ == "__main__":
