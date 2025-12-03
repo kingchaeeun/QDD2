@@ -235,6 +235,8 @@ def check_conditions(title: str, content: str) -> bool:
 def crawl_world_articles(
     num_articles: int = 100,
     days_back: int = 90,
+    start_date: Optional[str] = None,   # YYYYMMDD 또는 YYYY-MM-DD
+    end_date: Optional[str] = None,     # YYYYMMDD 또는 YYYY-MM-DD
 ) -> pd.DataFrame:
     """
     세계(104) 섹션에서,
@@ -242,21 +244,70 @@ def crawl_world_articles(
     - 헤드라인에 직접 인용문이 있는 기사만
     - num_articles개 채워질 때까지 수집 후 즉시 종료.
 
+    날짜 설정 규칙:
+      - start_date, end_date 둘 다 주면: 그 구간(과거~최신)만 탐색
+      - 둘 다 없으면: today 기준 days_back일만큼 과거로 내려가며 탐색
+
+    ★ 기사 개별 페이지에서 뽑은 실제 날짜(art_date)를 기준으로
+      지정한 날짜 범위 밖이면 저장하지 않음.
     반환: DataFrame(columns=["category", "title", "date", "content", "url"])
     """
     data = {"category": [], "title": [], "date": [], "content": [], "url": []}
     collected_count = 0
     visited: set[str] = set()
 
-    today = datetime.today()
     print(">>> 기사 수집 시작 (세계 섹션, 헤드라인 직접 인용문 필터)...")
 
-    for d in range(days_back):
+    # ---------------------------------------------------------
+    # 1) 날짜 범위 설정 (list.naver에 넘길 date_list)
+    #    + 실제 기사 날짜 필터에 쓸 allowed_start_dt / allowed_end_dt
+    # ---------------------------------------------------------
+    date_list: list[str] = []
+
+    allowed_start_dt: Optional[datetime] = None
+    allowed_end_dt: Optional[datetime] = None
+
+    if start_date and end_date:
+        # 하이픈 허용: "2024-12-01" -> "20241201"
+        start_norm = start_date.replace("-", "")
+        end_norm = end_date.replace("-", "")
+
+        try:
+            start_dt = datetime.strptime(start_norm, "%Y%m%d")
+            end_dt = datetime.strptime(end_norm, "%Y%m%d")
+        except ValueError:
+            print("[ERROR] 날짜 포맷이 잘못되었습니다. YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다.")
+            return pd.DataFrame(data)
+
+        # start_dt가 더 최신, end_dt가 더 과거가 되도록 정렬
+        if start_dt < end_dt:
+            start_dt, end_dt = end_dt, start_dt
+
+        allowed_start_dt = end_dt
+        allowed_end_dt = start_dt
+
+        n_days = (start_dt - end_dt).days
+        for i in range(n_days + 1):
+            day = start_dt - timedelta(days=i)
+            date_list.append(day.strftime("%Y%m%d"))
+
+    else:
+        # 기존 days_back 로직 유지 (start/end 미지정 시)
+        today = datetime.today()
+        allowed_end_dt = today
+        allowed_start_dt = today - timedelta(days=days_back - 1)
+
+        for d in range(days_back):
+            date = today - timedelta(days=d)
+            date_list.append(date.strftime("%Y%m%d"))
+
+    # ---------------------------------------------------------
+    # 2) 날짜 루프 시작
+    # ---------------------------------------------------------
+    for date_str in date_list:
         if collected_count >= num_articles:
             break
 
-        date = today - timedelta(days=d)
-        date_str = date.strftime("%Y%m%d")
         page = 1
 
         while True:
@@ -290,18 +341,36 @@ def crawl_world_articles(
                 if href.startswith("/"):
                     href = BASE_URL + href
 
-                # 1) 섹션 필터: 실제로 sid=104 (세계)인 기사만
+                # 섹션 필터
                 if not is_world_section_url(href):
                     continue
 
-                # 2) 중복 기사 건너뛰기
+                # 중복 기사 방지
                 if href in visited:
                     continue
                 visited.add(href)
 
-                # 3) 기사 파싱
+                # 기사 파싱
                 title, art_date, content = get_article_content(href)
 
+                # 기사 날짜가 지정 범위 밖이면 스킵
+                if not art_date:
+                    continue
+
+                m = re.search(r"(\d{4})[.\-](\d{2})[.\-](\d{2})", art_date)
+                if not m:
+                    continue
+                yyyy, mm, dd = m.groups()
+                try:
+                    art_dt = datetime(int(yyyy), int(mm), int(dd))
+                except ValueError:
+                    continue
+
+                if allowed_start_dt and allowed_end_dt:
+                    if not (allowed_start_dt <= art_dt <= allowed_end_dt):
+                        continue
+
+                # 나머지 기존 필터 (인용문, 국내경제/부동산 등)
                 if title and content and check_conditions(title, content):
                     data["category"].append("세계")
                     data["title"].append(title)
@@ -322,7 +391,7 @@ def crawl_world_articles(
 
                 time.sleep(0.1)
 
-            # 이 페이지에서 새로 본 링크가 없다면 다음 페이지 의미 없음 → 종료
+            # 이 페이지에서 새 기사 하나도 못 건졌으면 다음 페이지 의미 없음
             if new_on_page == 0:
                 break
 
@@ -336,12 +405,17 @@ def crawl_world_articles(
     return df
 
 
+
 # -------------------------------------------------------------------
 # 5. 모듈 단독 실행용 (옵션)
 # -------------------------------------------------------------------
 
 if __name__ == "__main__":
-    df = crawl_world_articles(num_articles=10, days_back=30)
+    df = crawl_world_articles(
+        num_articles=5,
+        start_date="2024-11-01",  # 또는 "20241201"
+        end_date="2024-11-20",    # 또는 "20241120"
+    )
 
     if not df.empty:
         filename = "articles.csv"
