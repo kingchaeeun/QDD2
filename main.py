@@ -157,9 +157,10 @@ def run_app(
         if not query:
             logger.warning("No query available to search.")
         else:
-            # 4-A) 트럼프 컨텍스트 + rollcall=True → Rollcall 우선, 실패 시 CSE
-            if is_trump_context and rollcall:
-                logger.info("[Search] Trump context + rollcall=True → using Rollcall Selenium search first")
+            # 4-A) 트럼프 컨텍스트가 감지되면, rollcall 플래그와 무관하게
+            #      Rollcall JSON 검색을 우선 사용한다. (실패 시 CSE fallback)
+            if is_trump_context:
+                logger.info("[Search] Trump context detected → using Rollcall search first")
                 try:
                     rollcall_links = get_search_results(query, top_k=5)
                 except Exception as e:
@@ -177,9 +178,9 @@ def run_app(
                     data = google_cse_search(query, num=20, debug=debug)
                     search_items = data.get("items", []) or []
 
-            # 4-B) 그 외에는 무조건 CSE 사용
+            # 4-B) 트럼프 컨텍스트가 아니면 도메인 제한 CSE 사용
             else:
-                logger.info("[Search] Using Google CSE (non-Trump context or rollcall=False)")
+                logger.info("[Search] Using Google CSE (non-Trump context)")
                 data = google_cse_search(query, num=5, debug=debug)
                 search_items = data.get("items", []) or []
 

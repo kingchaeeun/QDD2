@@ -69,9 +69,19 @@ HTML_MIN_LENGTH = 500
 DEFAULT_TIMEOUT = 12
 PDF_TIMEOUT = 20
 
-# Google API Configuration (from environment variables)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX", "")
+# Google API Configuration
+# Prefer environment variables; fall back to legacy app.config values when present.
+try:
+    from app import config as legacy_app_config  # type: ignore
+except Exception:
+    legacy_app_config = None  # type: ignore[assignment]
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or (
+    getattr(legacy_app_config, "GOOGLE_API_KEY_ENV", "") if legacy_app_config else ""
+)
+GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX") or (
+    getattr(legacy_app_config, "GOOGLE_CSE_CX_ENV", "") if legacy_app_config else ""
+)
 
 # API Server Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")

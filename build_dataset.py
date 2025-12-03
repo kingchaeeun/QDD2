@@ -12,7 +12,7 @@ def build_dataset_from_articles(
     date_col: str = "date",          # 날짜 컬럼명
     output_csv: str | None = None,
     rollcall: bool = True,           # ← "트럼프일 때 rollcall 허용" 플래그
-    span_top_k: int = 3,             # ← 인용문마다 원문 후보 TOP K개 추출
+    span_top_k: int = 5,             # ← 인용문마다 원문 후보 TOP K개 추출
 ) -> pd.DataFrame:
     df_articles = pd.read_csv(input_csv)
     print("기사 컬럼:", df_articles.columns.tolist())

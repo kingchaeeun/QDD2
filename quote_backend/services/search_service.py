@@ -7,17 +7,23 @@ from typing import Dict, List, Optional
 
 # Import search functions - will use compatibility wrapper
 try:
-    from app.search_client import google_cse_search
+    from app.search_client import (
+        collect_candidates_google_cse,
+        google_cse_search,
+    )
     from app.rollcall_search import get_search_results
     from app.snippet_matcher import find_best_span_from_candidates_debug
 except ImportError:
     # Fallback if modules not yet migrated
     def google_cse_search(*args, **kwargs):
         return {"items": []}
-    
+
+    def collect_candidates_google_cse(*args, **kwargs):  # type: ignore[no-redef]
+        return []
+
     def get_search_results(*args, **kwargs):
         return []
-    
+
     def find_best_span_from_candidates_debug(*args, **kwargs):
         return None
 
@@ -54,9 +60,14 @@ class SearchService:
         """
         search_items: List[Dict] = []
 
-        # Trump context + rollcall=True → Rollcall 우선, 실패 시 CSE
-        if is_trump_context and rollcall:
-            logger.info("[Search] Trump context + rollcall=True → using Rollcall search first")
+        # Trump context + rollcall=True → Rollcall 우선, 실패 시 도메인 제한 CSE
+        # 혹시라도 상위 레이어에서 is_trump_context 플래그가 빠져도,
+        # 쿼리 문자열에 trump/트럼프가 있으면 Rollcall을 우선 시도한다.
+        query_lower = (query or "").lower()
+        has_trump_hint = "trump" in query_lower or "트럼프" in query
+
+        if (is_trump_context and rollcall) or has_trump_hint:
+            logger.info("[Search] Trump / Rollcall hint detected → using Rollcall search first")
             try:
                 rollcall_links = get_search_results(query, top_k=num_results)
             except Exception as e:
@@ -70,15 +81,39 @@ class SearchService:
             ]
 
             if not search_items:
-                logger.info("[Search] No rollcall results, fallback to Google CSE")
-                data = google_cse_search(query, num=num_results, debug=debug)
-                search_items = data.get("items", []) or []
+                logger.info("[Search] No rollcall results, fallback to domain-prioritized Google CSE")
+                try:
+                    candidates = collect_candidates_google_cse(
+                        query=query,
+                        top_per_domain=max(1, num_results // 2),
+                        debug=debug,
+                    )
+                    search_items = [
+                        {"link": c.get("url"), "snippet": c.get("snippet", "") or ""}
+                        for c in candidates
+                        if c.get("url")
+                    ]
+                except AssertionError as e:
+                    logger.warning("Google CSE not configured, skipping external search: %s", e)
+                    search_items = []
 
-        # 그 외에는 무조건 CSE 사용
+        # 그 외에는 도메인 우선순위가 반영된 CSE 사용
         else:
-            logger.info("[Search] Using Google CSE (non-Trump context or rollcall=False)")
-            data = google_cse_search(query, num=num_results, debug=debug)
-            search_items = data.get("items", []) or []
+            logger.info("[Search] Using Google CSE with whitelisted domains")
+            try:
+                candidates = collect_candidates_google_cse(
+                    query=query,
+                    top_per_domain=max(1, num_results // 2),
+                    debug=debug,
+                )
+                search_items = [
+                    {"link": c.get("url"), "snippet": c.get("snippet", "") or ""}
+                    for c in candidates
+                    if c.get("url")
+                ]
+            except AssertionError as e:
+                logger.warning("Google CSE not configured, skipping external search: %s", e)
+                search_items = []
 
         return search_items
 

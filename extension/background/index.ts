@@ -8,7 +8,7 @@ declare const chrome: {
   };
 };
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+const API_BASE = 'http://127.0.0.1:8000';
 
 type AnalyzeRequest = {
   type: 'qdd:analyze-quotes';
@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((message: AnalyzeRequest, _sender, sendResp
 });
 
 async function runAnalysis(payload: AnalyzeRequest) {
-  const response = await fetch(`${API_BASE}/analyze`, {
+  const response = await fetch(`${API_BASE}/api/v1/analyze-quotes`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
