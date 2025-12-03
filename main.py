@@ -19,11 +19,21 @@ import argparse
 import logging
 import sys
 
-from qdd2.snippet_matcher import find_best_span_from_candidates_debug
-from qdd2.translation import translate_ko_to_en
-from qdd2.pipeline import build_queries_from_text
-from qdd2.search_client import google_cse_search
-from qdd2.rollcall_search import get_search_results
+try:
+    from quote_backend.core.pipeline import build_queries_from_text
+    from quote_backend.utils.translation import translate_ko_to_en
+    from quote_backend.services.search_service import SearchService
+    # Import legacy modules for compatibility
+    from qdd2.snippet_matcher import find_best_span_from_candidates_debug
+    from qdd2.search_client import google_cse_search
+    from qdd2.rollcall_search import get_search_results
+except ImportError:
+    # Fallback to old imports
+    from qdd2.snippet_matcher import find_best_span_from_candidates_debug
+    from qdd2.translation import translate_ko_to_en
+    from qdd2.pipeline import build_queries_from_text
+    from qdd2.search_client import google_cse_search
+    from qdd2.rollcall_search import get_search_results
 
 TRUMP_NAME_VARIANTS = [
     "트럼프",

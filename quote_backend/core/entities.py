@@ -4,14 +4,21 @@ NER helpers: run pipeline, merge BIO tokens, and return cleaned entities.
 
 from typing import Dict, List, Sequence
 
-from qdd2 import config
-from qdd2.models import get_ner_pipeline
-from qdd2.text_utils import split_sentences
+from quote_backend.config import DEFAULT_DEVICE, NER_LABELS
+from quote_backend.models.loaders import get_ner_pipeline
+from quote_backend.utils.text_utils import split_sentences
 
 
 def merge_ner_entities(results: Sequence[Dict], debug: bool = False) -> List[Dict]:
     """
     Merge BIO-tagged pieces from the transformer NER output into full entities.
+    
+    Args:
+        results: Sequence of NER token results
+        debug: Enable debug output
+        
+    Returns:
+        List of merged entities with label and word
     """
     merged_groups = []
     buffer = []
@@ -20,31 +27,37 @@ def merge_ner_entities(results: Sequence[Dict], debug: bool = False) -> List[Dic
         raw_label = str(ent.get("entity") or "")
         parts = raw_label.split("-")
 
-        # HuggingFace nav er-ner style: "B-PER", "I-ORG" 등 다양한 포맷을 안전하게 처리
+        # Robustly parse HuggingFace-style BIO tags.
+        # Typical shapes:
+        #   - "B-PER", "I-ORG"  (naver-ner, etc.)
+        #   - "PER-B", "ORG-I"  (older conventions)
+        #   - "PER"             (no BIO prefix)
         entity_type = ""
         tag_type = "B"
 
         if len(parts) == 2:
             left, right = parts[0], parts[1]
-            if left in {"B", "I"} and right in config.NER_LABELS:
+            if left in {"B", "I"} and right in NER_LABELS:
                 # "B-PER" → tag_type=B, entity_type=PER
                 tag_type, entity_type = left, right
-            elif right in {"B", "I"} and left in config.NER_LABELS:
+            elif right in {"B", "I"} and left in NER_LABELS:
                 # "PER-B" → tag_type=B, entity_type=PER
                 tag_type, entity_type = right, left
             else:
-                # 예상치 못한 포맷: 이전 동작과 최대한 비슷하게 유지
+                # Fallback: keep previous behavior
                 entity_type, tag_type = left, right
         elif len(parts) == 1:
+            # No BIO info, treat as beginning of entity
             entity_type = parts[0]
             tag_type = "B"
         else:
+            # Unexpected format – skip
             entity_type = parts[0] if parts else ""
             tag_type = "B"
 
-        if entity_type not in config.NER_LABELS:
+        if entity_type not in NER_LABELS:
             if debug:
-                print(f"Skipping non-target label: {entity_type} (raw={raw_label})")
+                print(f"Skipping non-target label: {entity_type}")
             continue
 
         if tag_type == "B":
@@ -85,10 +98,17 @@ def merge_ner_entities(results: Sequence[Dict], debug: bool = False) -> List[Dic
     return entities
 
 
-def extract_ner_entities(text: str, device: int = config.DEFAULT_DEVICE, debug: bool = False) -> List[Dict]:
+def extract_ner_entities(text: str, device: int = DEFAULT_DEVICE, debug: bool = False) -> List[Dict]:
     """
     Run NER over each sentence and merge tokens into clean entities.
-    Returns: [{'label': 'PER', 'word': '...'}, ...]
+    
+    Args:
+        text: Input text to process
+        device: Device index (0 for CPU, >0 for GPU)
+        debug: Enable debug output
+        
+    Returns:
+        List of entities with label and word: [{'label': 'PER', 'word': '...'}, ...]
     """
     sentences = split_sentences(text)
     ner = get_ner_pipeline(device=device)
@@ -104,3 +124,4 @@ def extract_ner_entities(text: str, device: int = config.DEFAULT_DEVICE, debug: 
             print(f"  Raw: {len(raw)} -> Merged: {len(merged)}")
 
     return all_entities
+
