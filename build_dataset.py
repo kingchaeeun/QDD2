@@ -87,7 +87,6 @@ def build_dataset_from_articles(
                     top_n=15,
                     top_k=3,              # (키워드 관련 top_k; 기존 그대로 유지)
                     rollcall=use_rollcall,
-                    top_k=3,
                     debug=False,
                     search=True,
                     top_matches=2,  # SBERT top-k 설정
