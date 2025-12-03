@@ -64,85 +64,6 @@ def _dedupe_preserve(seq: List[str]) -> List[str]:
         out.append(item)
     return out
 
-def _select_rollcall_focus_entity(
-    entities: Optional[List[Dict[str, str]]],
-    speaker_ko: Optional[str] = None,
-) -> Tuple[str, str]:
-    """
-    Rollcall 모드에서 사용할 '포커스 엔티티' 1개 선택.
-
-    - 스피커와 겹치는 PS는 제외
-    - 우선순위: LC > OG > PS
-    - 같은 text는 빈도/길이 기반으로 스코어링
-    - 반환: (ko_text, en_text) (없으면 ("",""))
-    """
-    if not entities:
-        return "", ""
-
-    # monologg/koelectra-base-v3-naver-ner 기준
-    LABEL_PRIORITY = {
-        "LC": 3,  # 장소
-        "OG": 2,  # 조직
-        "PS": 1,  # 사람(스피커 제외)
-    }
-
-    stats: Dict[str, Dict[str, object]] = {}
-
-    for ent in entities:
-        text_val = (ent.get("text") or "").strip()
-        if not text_val:
-            continue
-
-        raw_label = (
-            ent.get("label")
-            or ent.get("tag")
-            or ent.get("ner")
-            or ""
-        )
-        label = raw_label.replace("B-", "").replace("I-", "")
-
-        # 관심 없는 레이블은 제외
-        if label not in LABEL_PRIORITY:
-            continue
-
-        # 스피커 이름과 겹치는 PS는 제외
-        if label == "PS" and speaker_ko:
-            if text_val in speaker_ko or speaker_ko in text_val:
-                continue
-
-        key = text_val  # 같은 text는 하나로 묶음
-        entry = stats.get(key)
-        if entry is None:
-            stats[key] = {
-                "label": label,
-                "count": 1,
-                "len": len(text_val),
-                "translated": ent.get("translated", text_val),
-            }
-        else:
-            entry["count"] = int(entry["count"]) + 1
-            entry["len"] = max(int(entry["len"]), len(text_val))
-
-    if not stats:
-        return "", ""
-
-    # 스코어: 레이블 우선순위 -> 등장 빈도 -> 길이
-    def _score_item(item):
-        text, info = item
-        label = info["label"]
-        count = info["count"]
-        length = info["len"]
-        base = LABEL_PRIORITY.get(label, 0)
-        return (base, count, length)
-
-    best_text, best_info = sorted(
-        stats.items(),
-        key=_score_item,
-        reverse=True,
-    )[0]
-
-    return best_text, str(best_info.get("translated", best_text))
-
 
 def generate_search_query(
     entities_by_type: Dict[str, List[str]],
@@ -151,9 +72,7 @@ def generate_search_query(
     quote_sentence: Optional[str] = None,
     article_date: Optional[str] = None,  # YYYY-MM-DD
     rollcall_mode: bool = False,
-    use_wikidata: bool = True,
-    # 🔥 추가: NER 엔티티 원본 리스트 (text/label/translated 등 들어있는 dict 리스트)
-    entities: Optional[List[Dict[str, str]]] = None,
+    use_wikidata: bool = True
 ) -> Dict[str, Optional[str]]:
     """
     Build Korean/English search queries using entities + keywords.
@@ -262,11 +181,6 @@ def generate_search_query(
     # =========================
     # 2) 일반 모드 (기존 로직)
     # =========================
-    base_tokens: List[str] = [speaker_en] + locs_en_tokens + kws_en_tokens
-    if date_en:
-        base_tokens.append(date_en)   # ← 여기서도 "November 30, 2025" 추가
-
-
     query_en_tokens: List[str] = _dedupe_preserve(
         [speaker_en] + locs_en_tokens + kws_en_tokens
     )

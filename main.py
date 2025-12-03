@@ -24,37 +24,7 @@ from qdd2.translation import translate_ko_to_en
 from qdd2.pipeline import build_queries_from_text
 from qdd2.search_client import google_cse_search
 from qdd2.rollcall_search import get_search_results
-
-TRUMP_NAME_VARIANTS = [
-    "트럼프",
-    "도널드 트럼프",
-    "도널드 J 트럼프",
-    "donald trump",
-    "donald j. trump",
-    "president trump",
-]
-
-
-def contains_trump_entity(pipeline_result: dict) -> bool:
-    """
-    build_queries_from_text 결과의 NER 엔티티 중
-    트럼프(도널드 트럼프)가 하나라도 포함돼 있으면 True.
-    PER/PERSON 두 라벨을 모두 확인한다.
-    """
-    entities_by_type = pipeline_result.get("entities_by_type", {}) or {}
-
-    persons: list[str] = []
-    for key in ("PER", "PERSON"):
-        persons.extend(entities_by_type.get(key, []) or [])
-
-    norm_persons = [str(p).lower() for p in persons]
-
-    for p in norm_persons:
-        for variant in TRUMP_NAME_VARIANTS:
-            if variant.lower() in p:
-                return True
-    return False
-
+from qdd2.trump_utils import detect_trump_context
 
 def run_qdd2(
     text: str | None = None,
@@ -66,7 +36,31 @@ def run_qdd2(
     rollcall: bool = False,
     debug: bool = False,
     search: bool = False,
+    top_matches: int = 1,  # ★ 추가
 ):
+    def get_top_k_spans(
+        quote_en: str,
+        candidates: list[dict],
+        k: int,
+        num_before: int = 1,
+        num_after: int = 1,
+        min_score: float = 0.2,
+    ):
+        results = []
+        for c in candidates:
+            span = find_best_span_from_candidates_debug(
+                quote_en=quote_en,
+                candidates=[c],
+                num_before=num_before,
+                num_after=num_after,
+                min_score=min_score,
+            )
+            if span:
+                results.append(span)
+
+        results = sorted(results, key=lambda x: x.get("best_score", 0), reverse=True)
+        return results[:k]
+
     """
     QDD2 파이프라인을 Python 함수로 호출할 수 있게 한 엔트리포인트.
 
@@ -127,23 +121,14 @@ def run_qdd2(
         bool(result.get("queries", {}).get("ko")),
         bool(result.get("queries", {}).get("en")),
     )
+    quote_text = quote or ""
 
     # 3-A) NER 기반 트럼프 감지
-    is_trump_context = contains_trump_entity(result)
-
-    # 3-B) 텍스트/인용문에 직접 "트럼프/Trump"가 등장하는 경우 보조로 감지
-    text_lower = loaded_text.lower()
-    quote_text = quote or ""
-    quote_lower = quote_text.lower()
-
-    if not is_trump_context:
-        if (
-            "트럼프" in quote_text
-            or "도널드 트럼프" in quote_text
-            or "trump" in quote_lower
-            or ("트럼프" in loaded_text and "도널드" in loaded_text)
-        ):
-            is_trump_context = True
+    is_trump_context = detect_trump_context(
+    article_text=loaded_text,
+    quote_text=quote,
+    pipeline_result=result,
+)
 
     logger.info("Trump context detected: %s", is_trump_context)
 
@@ -222,13 +207,15 @@ def run_qdd2(
 
                 if candidates:
                     try:
-                        best_span = find_best_span_from_candidates_debug(
+                        top_spans = get_top_k_spans(
                             quote_en=quote_for_match_en,
                             candidates=candidates,
+                            k=top_matches,
                             num_before=1,
                             num_after=1,
-                            min_score=0.2,  # threshold는 상황에 따라 조절 가능
+                            min_score=0.2,
                         )
+                        best_span = top_spans[0] if top_spans else None
                         if best_span:
                             logger.info(
                                 "[Step 6] Best span found: score=%.4f, url=%s",
@@ -265,11 +252,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=3, help="Keywords to include in query (default: 3)")
     parser.add_argument("--rollcall", action="store_true", help="Use rollcall.com-oriented query construction")
     parser.add_argument("--debug", action="store_true", help="Verbose debug logs")
-    parser.add_argument(
-        "--search",
-        action="store_true",
-        help="Automatically run web search (Rollcall for Trump context, otherwise Google CSE)",
-    )
+    parser.add_argument("--search",action="store_true",help="Automatically run web search (Rollcall for Trump context, otherwise Google CSE)")
+    parser.add_argument("--top-matches",type=int,default=1,help="Number of top similarity spans to return (default: 1)")
+
     return parser.parse_args()
 
 
@@ -297,6 +282,7 @@ def main():
         rollcall=args.rollcall,
         debug=args.debug,
         search=args.search,
+        top_matches=args.top_matches,   # ★ 추가
     )
 
     result = out["pipeline_result"]
@@ -321,12 +307,14 @@ def main():
 
     best_span = out.get("best_span")
 
-    if args.search and best_span:
-        print("\n=== Best span by SBERT similarity ===")
-        print(f"URL        : {best_span.get('url', '')}")
-        print(f"SCORE      : {best_span.get('best_score', -1.0):.4f}")
-        print(f"SENTENCE   : {best_span.get('best_sentence', '')}")
-        print(f"SPAN TEXT  : {best_span.get('span_text', '')}")
+    if args.search and out.get("top_spans"):
+        print("\n=== Top SBERT similarity spans ===")
+        for i, span in enumerate(out["top_spans"], 1):
+            print(f"\n# {i}")
+            print(f"URL        : {span.get('url', '')}")
+            print(f"SCORE      : {span.get('best_score', -1.0):.4f}")
+            print(f"SENTENCE   : {span.get('best_sentence', '')}")
+            print(f"SPAN TEXT  : {span.get('span_text', '')}")
 
 
 if __name__ == "__main__":
